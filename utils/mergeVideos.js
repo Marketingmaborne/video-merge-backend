@@ -1,35 +1,42 @@
 import ffmpeg from 'fluent-ffmpeg';
-import fs from 'fs/promises';
+import fs from 'fs';
+import fetch from 'node-fetch';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import axios from 'axios';
-import { createWriteStream } from 'fs';
 
-const TEMP_FOLDER = './temp';
-await fs.mkdir(TEMP_FOLDER, { recursive: true });
+// Fonction utilitaire pour télécharger une vidéo temporairement
+async function downloadVideo(url, filename) {
+  const res = await fetch(url);
+  const dest = fs.createWriteStream(filename);
+  return new Promise((resolve, reject) => {
+    res.body.pipe(dest);
+    res.body.on('error', reject);
+    dest.on('finish', () => resolve(filename));
+  });
+}
 
+// Fonction principale pour fusionner les vidéos
 export async function mergeVideosFromUrls(urls) {
-  const localPaths = [];
+  const tempDir = './temp';
+  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
 
-  for (const [i, url] of urls.entries()) {
-    const filename = `${TEMP_FOLDER}/video${i}.mp4`;
-    const response = await axios({ url, method: 'GET', responseType: 'stream' });
-    const writer = createWriteStream(filename);
-    await new Promise((resolve, reject) => {
-      response.data.pipe(writer);
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-    });
-    localPaths.push(filename);
-  }
+  const localFiles = await Promise.all(
+    urls.map(async (url, i) => {
+      const filePath = path.join(tempDir, `input_${i}.mp4`);
+      await downloadVideo(url, filePath);
+      return filePath;
+    })
+  );
 
-  const outputFilename = `${TEMP_FOLDER}/merged-${uuidv4()}.mp4`;
+  const outputFile = path.join(tempDir, `merged-${uuidv4()}.mp4`);
+  const merged = ffmpeg();
+
+  localFiles.forEach(file => merged.input(file));
 
   return new Promise((resolve, reject) => {
-    const command = ffmpeg();
-    localPaths.forEach((path) => command.input(path));
-    command
-      .on('end', () => resolve(outputFilename))
+    merged
       .on('error', reject)
-      .mergeToFile(outputFilename);
+      .on('end', () => resolve(outputFile))
+      .mergeToFile(outputFile);
   });
 }
