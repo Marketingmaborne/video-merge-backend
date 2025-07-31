@@ -1,42 +1,49 @@
-import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
-import fetch from 'node-fetch';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import ffmpeg from 'fluent-ffmpeg';
+import axios from 'axios';
 
-// Fonction utilitaire pour télécharger une vidéo temporairement
-async function downloadVideo(url, filename) {
-  const res = await fetch(url);
-  const dest = fs.createWriteStream(filename);
-  return new Promise((resolve, reject) => {
-    res.body.pipe(dest);
-    res.body.on('error', reject);
-    dest.on('finish', () => resolve(filename));
-  });
-}
+export async function mergeVideosFromUrls(videoUrls) {
+  const tempDir = path.join('temp');
+  const mergedFilename = `merged-${uuidv4()}.mp4`;
+  const mergedPath = path.join(tempDir, mergedFilename);
 
-// Fonction principale pour fusionner les vidéos
-export async function mergeVideosFromUrls(urls) {
-  const tempDir = './temp';
-  if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+  // Téléchargement des vidéos dans temp/
+  const downloadedPaths = [];
+  for (let i = 0; i < videoUrls.length; i++) {
+    const url = videoUrls[i];
+    const response = await axios({
+      method: 'GET',
+      url,
+      responseType: 'stream',
+    });
 
-  const localFiles = await Promise.all(
-    urls.map(async (url, i) => {
-      const filePath = path.join(tempDir, `input_${i}.mp4`);
-      await downloadVideo(url, filePath);
-      return filePath;
-    })
-  );
+    const tempFilePath = path.join(tempDir, `video_${i}.mp4`);
+    const writer = fs.createWriteStream(tempFilePath);
 
-  const outputFile = path.join(tempDir, `merged-${uuidv4()}.mp4`);
-  const merged = ffmpeg();
+    await new Promise((resolve, reject) => {
+      response.data.pipe(writer);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+    });
 
-  localFiles.forEach(file => merged.input(file));
+    downloadedPaths.push(tempFilePath);
+  }
 
-  return new Promise((resolve, reject) => {
-    merged
+  // Fusion des vidéos avec FFmpeg
+  await new Promise((resolve, reject) => {
+    const command = ffmpeg();
+
+    downloadedPaths.forEach(file => {
+      command.input(file);
+    });
+
+    command
       .on('error', reject)
-      .on('end', () => resolve(outputFile))
-      .mergeToFile(outputFile);
+      .on('end', resolve)
+      .mergeToFile(mergedPath);
   });
+
+  return `/temp/${mergedFilename}`;
 }
