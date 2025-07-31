@@ -1,18 +1,15 @@
 import express from 'express';
 import { mergeVideosFromUrls } from './utils/mergeVideos.js';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { v4 as uuidv4 } from 'uuid';
+import fs from 'fs';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.use(express.json());
+app.use('/temp', express.static(path.join('temp'))); // Serve static files from /temp
 
-// ➕ Ajoute cette ligne pour rendre le dossier /temp accessible publiquement
-app.use('/temp', express.static(path.join(__dirname, 'temp')));
-
-// ✅ Route d'accueil (GET /)
 app.get('/', (req, res) => {
   res.send('👋 Welcome to the Video Merge API');
 });
@@ -24,12 +21,22 @@ app.post('/merge', async (req, res) => {
     return res.status(400).json({ error: 'Invalid input: Provide an array of video URLs.' });
   }
 
+  const outputFilename = `merged-${uuidv4()}.mp4`;
+  const outputPath = path.join('temp', outputFilename);
+
+  // 🔁 Répond immédiatement pour éviter timeout côté n8n
+  res.status(202).json({
+    success: true,
+    status: 'processing',
+    mergedVideoUrl: `/temp/${outputFilename}`
+  });
+
+  // 💻 Fusion en arrière-plan
   try {
-    const outputUrl = await mergeVideosFromUrls(videoUrls);
-    res.status(200).json({ success: true, mergedVideoUrl: outputUrl });
+    await mergeVideosFromUrls(videoUrls, outputPath);
+    console.log(`✅ Fusion terminée : ${outputFilename}`);
   } catch (error) {
-    console.error('[❌ merge error]', error);
-    res.status(500).json({ error: 'Failed to merge videos.' });
+    console.error('[❌ erreur fusion async]', error);
   }
 });
 
